@@ -19,9 +19,10 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
 
-include("servers.php");
+$Id$
+
+*/
 
 class Pickle
 {
@@ -32,17 +33,43 @@ class Pickle
 	var $status = 0;
 	var $player = 0; // Can we make a Player class?
 	var $_events = array();
+	var $run = true;
 	
 	function Pickle()
 	{
 		global $server;
-		$this->servers = $server;
+		$this->servers = parse_ini_file('servers.ini', true);
+	}
+	
+	function server_id($name);
+	{
+		foreach ($this->servers as $value => $server)
+		{
+			if ($server['name'] == $name)
+			{
+				return $value;
+			}
+		}
+		return -1;
+	}
+	
+	function start()
+	{
+		while($this->run)
+		{
+			$this->process_packets();
+			$this->raise_event('tick', array())
+			sleep(1);
+		}
 	}
 	
 	function connect($username, $password, $server = -1)
 	{
 		if ($server != null)
 			$this->server = $server;
+			
+		if (!is_numeric($this->server))
+			$this->server = $this->server_id($this->server);
 
 		if ($this->server < 0)
 			return 1;
@@ -158,8 +185,7 @@ class Pickle
 		$array = explode('%', $data);
 		unset($array[0]);
 		unset($array[1]);
-		sort($array);
-		return $array;
+		return array_values($array);
 	}
 	
 	function _send_packet($data)
