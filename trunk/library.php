@@ -32,8 +32,10 @@ class Pickle
 	var $sock;
 	var $status = 0;
 	var $player = 0; // Can we make a Player class?
+	var $key = '';
+	var $players = array();
 	var $_events = array();
-	var $run = true;
+	var $run = false;
 	
 	function Pickle()
 	{
@@ -41,7 +43,7 @@ class Pickle
 		$this->servers = parse_ini_file('servers.ini', true);
 	}
 	
-	function server_id($name);
+	function server_id($name)
 	{
 		foreach ($this->servers as $value => $server)
 		{
@@ -58,9 +60,16 @@ class Pickle
 		while($this->run)
 		{
 			$this->process_packets();
-			$this->raise_event('tick', array())
+			$this->raise_event('tick', array());
 			sleep(1);
 		}
+		fclose($this->sock);
+	}
+	
+	function stop()
+	{
+		$this->run = false;
+		return true;
 	}
 	
 	function connect($username, $password, $server = -1)
@@ -85,9 +94,9 @@ class Pickle
 			$data .= fread($sock, 8192);
 		}
 		
-		if (!preg_match('|<k>([0-9]*)</k>|', $data, $match)
+		if (!preg_match('|<k>(.*)</k>|', $data, $match))
 			return 2;
-		$key = generateKey($password, $match[0], true);
+		$key = $this->_generate_key($password, $match[1], true);
 		
 		fwrite($sock, "<msg t='sys'><body action='login' r='0'><login z='w1'><nick><![CDATA[$username]]></nick><pword><![CDATA[$key]]></pword></login></body></msg>" . chr(0));
 		
@@ -97,12 +106,14 @@ class Pickle
 			$data .= fread($sock, 8192);
 		}
 		
-		$packet = _decode_packet($data);
-		$this->player = $packet[2];
-		$key = $packet[3];
+		$packet = $this->_decode_packet($data);
+		if ($packet[0] == 'e')
+			return $packet[2];
+		$this->player = $this->load_player($packet[2]);
+		$this->key = $packet[3];
 		
 		fclose($sock);
-		$this->sock = fsockopen($this->server[$this->server]["ip"], $this->server[$this->server]["port"]);
+		$this->sock = fsockopen($this->servers[$this->server]["ip"], $this->servers[$this->server]["port"]);
 		
 		fwrite($this->sock, "<policy-file-request/>".chr(0));
 		fwrite($this->sock, "<msg t='sys'><body action='verChk' r='0'><ver v='130' /></body></msg>".chr(0));
@@ -111,21 +122,16 @@ class Pickle
 		$data = fread($this->sock, 8192);
 		while (!(stripos($data, '</k>')))
 		{
-			$data .= fread($sock, 8192);
+			$data .= fread($this->sock, 8192);
 		}
 		
-		if (!preg_match('|<k>([0-9]*)</k>|', $data, $match)
+		if (!preg_match('|<k>(.*)</k>|', $data, $match))
 			return 3;
-		$key = generateKey($key, $match[0]);
+		$key = $this->_generate_key($lkey, $match[1]);
 		
-		fwrite($sock, "<msg t='sys'><body action='login' r='0'><login z='w1'><nick><![CDATA[$username]]></nick><pword><![CDATA[{$this->key}]]></pword></login></body></msg>".chr(0));
+		fwrite($this->sock, "<msg t='sys'><body action='login' r='0'><login z='w1'><nick><![CDATA[$username]]></nick><pword><![CDATA[$key]]></pword></login></body></msg>".chr(0));
 		
-		$this->_send_packet(array('s', 'j#js', -1, $this->player, $key, ''));
-		$this->_send_packet(array('s', 'i#gi', -1));
-		$this->_send_packet(array('s', 'n#gn', -1));
-		$this->_send_packet(array('s', 'b#gb', -1));
-		$this->_send_packet(array('s', 'p#gu', -1));
-		
+		$this->run = true;
 		return 0;
 	}
 	
@@ -136,33 +142,104 @@ class Pickle
 	
 	function raise_event($event, $data)
 	{
+		if (!isset($this->_events[$event]))
+			return false;
 		foreach ($this->_events[$event] as $event)
 		{
-			call_user_func_array($event, $data);
+			call_user_func_array($event, array_merge(array($this), $data));
 		}
 	}
 	
 	function process_packets()
 	{
-		while (!feof($this->sock))
+		while (!(stripos($data, chr(0))))
 		{
-			$data .= fgets($this->sock, 8192);
+			$data .= fread($this->sock, 8192);
 		}
 		
 		$packets = explode(chr(0), $data);
 		foreach ($packets as $packet)
 		{
-			if ($packet == '')
-				continue;
 			$p = $this->_decode_packet($packet);
+			if ($p === false)
+				continue;
 			switch ($p[0])
 			{
-				case 'jr':
-					$this->room = $p[1];
-					$this->raise_event('join_room', array($p[1]);
+				case 'l': // Login Complete
+					$this->_send_packet(array('s', 'j#js', -1, $this->player['id'], $this->key, ''));
 					break;
+				case 'js': // Join Server
+					$this->_send_packet(array('s', 'i#gi', -1));
+					$this->_send_packet(array('s', 'n#gn', -1));
+					$this->_send_packet(array('s', 'b#gb', -1));
+					$this->_send_packet(array('s', 'p#gu', -1));
+					echo "Fire 2\n";
+					break;
+				case 'lp': // Load Player
+					$this->player = $this->load_player($p[2]);
+					$this->raise_event('load_player', array($this->player));
+					break;
+				case 'jr': // Join Room
+					$this->room = $p[1];
+					unset($p[count($p) - 1], $p[0], $p[1], $p[2]);
+					$players = array_values($p);
+					foreach ($players as $player)
+					{
+						$x = $this->load_player($player);
+						$this->players[$x['id']] = $x;
+					}
+					$this->raise_event('join_room', array($p[1], $this->players));
+					break;
+				case 'ap': // Add Player
+					$player = $this->load_player($p[2]);
+					$this->players[$x['id']] = $player;
+					$this->raise_event('player_joined', array($player));
+					break;
+				case 'rp': // Remove Player
+					if (isset($this->players[$p[2]]))
+					{
+						$player = $this->players[$p[2]];
+						unset($this->players[$p[2]]);
+						$this->raise_event('player_left', array($player));
+					}
+					break;
+				case 'sp': // Send Position
+					$this->players[$p[2]]['x'] = $p[3];
+					$this->players[$p[2]]['y'] = $p[4];
+					$this->raise_event('player_moved', array($p[2], $p[3], $p[4]));
+					break;
+				case 'up': // Update Player
+					$player = $this->load_player($p[2]);
+					$this->players[$x['id']] = $player;
+					$this->raise_event('player_updated', array($player));
+				default:
+					$this->raise_event('unknown_packet', array($p));
 			}
 		}
+	}
+	
+	function load_player($data)
+	{
+		if (is_numeric($data))
+			return array('id' => $data);
+		$data = explode('|', $data);
+		$player = array();
+		$player['id'] = $data[0];
+		$player['username'] = $data[1];
+		$player['color'] = $data[2];
+		$player['head'] = $data[3];
+		$player['face'] = $data[4];
+		$player['neck'] = $data[5];
+		$player['body'] = $data[6];
+		$player['hand'] = $data[7];
+		$player['feet'] = $data[8];
+		$player['flag'] = $data[9];
+		$player['photo'] = $data[10];
+		$player['x'] = $data[11];
+		$player['y'] = $data[12];
+		$player['f12'] = $data[13];
+		$player['member'] = $data[14];
+		return $player;
 	}
 	
 	function _generate_key($password, $key, $login = false)
@@ -171,7 +248,7 @@ class Pickle
 		{
 			return strtolower($this->_encrypt_password(strtoupper($this->_encrypt_password($password)).$key));
 		} else {
-			return strtolower(encryptPassword($password.$key).$password);
+			return strtolower($this->_encrypt_password($password.$key).$password);
 		}
 	}
 	
@@ -183,6 +260,8 @@ class Pickle
 	function _decode_packet($data)
 	{
 		$array = explode('%', $data);
+		if ($array[1] != 'xt')
+			return false;
 		unset($array[0]);
 		unset($array[1]);
 		return array_values($array);
@@ -190,6 +269,12 @@ class Pickle
 	
 	function _send_packet($data)
 	{
-		fwrite($this->sock, '%xt%'.implode('%', $data).chr(0);
+		$data[] = '';
+		fwrite($this->sock, '%xt%'.implode('%', $data).chr(0));
 	}
+}
+
+class Tasks
+{
+	var $_p;
 }

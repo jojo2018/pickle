@@ -1,0 +1,29 @@
+Manual
+------
+
+This is the manual for the object oriented Pickle library.
+
+
+Events
+------
+
+Every event has a reference to the Pickle class as the first parameter.
+This saves having to mess around with globals.
+
+tick - Fires at the end of each loop (minimum of 1 second apart)
+Parameters: None
+
+join_room - Fires when a new room is joined
+Parameters: Room id, Array of players in the room
+
+player_joined - Fires when a player joins the room you are currently in
+Parameters: Array of the player's information
+
+player_left - Fires when a player leaves the room
+Parameters: Array of the player's information
+
+player_moved - Fires when a player moves
+Parameters: Player id, X, Y
+
+unknown_packet - Fires when a non-supported packet arrives
+Parameters: Array of the packet's chunks
