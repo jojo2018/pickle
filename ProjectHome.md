@@ -1,0 +1,2 @@
+# Pickle: The Penguin Client Library #
+Pickle is an open source PHP library which eases the development of third party game clients for the massively multiplayer online [Flash game](http://en.wikipedia.org/wiki/Browser_game#Plugin-based_games) [Club Penguin](http://www.clubpenguin.com/).
